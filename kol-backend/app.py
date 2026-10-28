@@ -12,8 +12,8 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 DB_FILE = "campaigns.db"
 
 # 填入你的 LINE 官方帳號憑證
-LINE_TOKEN = os.getenv("LINE_TOKEN", "U149614527cd27dc66efb13afb8bd2b63")
-LINE_USER_ID = os.getenv("LINE_USER_ID", "YOUR_LINE_USER_ID")
+LINE_TOKEN = os.getenv("LINE_TOKEN", "7911bf901d0f3c9bfd8c205b2fde4013")
+LINE_USER_ID = os.getenv("LINE_USER_ID", "U149614527cd27dc66efb13afb8bd2b63")
 
 def send_line_push(text):
     if "YOUR_LINE" in LINE_TOKEN:
