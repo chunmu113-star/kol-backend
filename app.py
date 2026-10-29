@@ -6,12 +6,10 @@ from flask_cors import CORS
 import requests
 
 app = Flask(__name__)
-# 允許跨來源請求
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 DB_FILE = "campaigns.db"
 
-# 填入 LINE 官方帳號金鑰
 LINE_TOKEN = os.getenv("LINE_TOKEN", "NsKFLWsiaXW9sS4GW7RgpPbAqxjRZWNGBDEFxFqujB3UIbQmmxFzwBHBTa8pVLq6CVAGkwgjbygQWzC3VFw86vPXRIEFlC3//ygPVG+Tp/fu+UiUAQzlj+wsqtjvtJNSqP6eFH7ZMJN3VGjmlS43xQdB04t89/1O/w1cDnyilFU=")
 LINE_USER_ID = os.getenv("LINE_USER_ID", "U149614527cd27dc66efb13afb8bd2b63")
 
@@ -41,7 +39,6 @@ def get_db():
 
 def init_db():
     with get_db() as conn:
-        # 1. 開團案件表
         conn.execute("""
             CREATE TABLE IF NOT EXISTS campaigns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,24 +50,36 @@ def init_db():
                 status TEXT DEFAULT '進行中'
             )
         """)
-        # 2. 廠商資料庫表
         conn.execute("""
             CREATE TABLE IF NOT EXISTS vendors (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE NOT NULL
             )
         """)
-        # 寫入預設廠商
         conn.execute("INSERT OR IGNORE INTO vendors (name) VALUES ('品牌A')")
         conn.execute("INSERT OR IGNORE INTO vendors (name) VALUES ('優質生活家')")
         conn.commit()
 
 init_db()
 
-# --- 根目錄歡迎路由 (避免 Render 健康檢查噴 404) ---
 @app.route("/", methods=["GET", "HEAD"])
 def index():
     return jsonify({"status": "running", "service": "KOL Secretary API"})
+
+# --- 接收 LINE Webhook 並取得 User ID ---
+@app.route("/callback", methods=["POST"])
+def callback():
+    data = request.json or {}
+    events = data.get("events", [])
+    for event in events:
+        source = event.get("source", {})
+        user_id = source.get("userId")
+        event_type = event.get("type")
+        print("=" * 45)
+        print(f"🔥 收到 LINE 事件: {event_type}")
+        print(f"🔥 抓到該好友的真實 USER ID: {user_id}")
+        print("=" * 45)
+    return jsonify({"status": "ok"})
 
 # --- 廠商名單庫 API ---
 @app.route("/api/vendors", methods=["GET"])
@@ -135,14 +144,13 @@ def delete_campaign(cid):
         conn.commit()
     return jsonify({"success": True})
 
-# --- 每日定時檢查與推播 API (給 Cron-job.org 呼叫) ---
+# --- 排程檢核 API ---
 @app.route("/api/cron-check", methods=["GET"])
 def cron_check():
     today_str = datetime.now().strftime("%Y-%m-%d")
     with get_db() as conn:
         cursor = conn.cursor()
         
-        # 1. 檢查 D-30 提醒
         cursor.execute("SELECT * FROM campaigns WHERE d30_date = ? AND status = '進行中'", (today_str,))
         for c in cursor.fetchall():
             msg = (
@@ -156,7 +164,6 @@ def cron_check():
             )
             send_line_push(msg)
 
-        # 2. 檢查 D-7 提醒
         cursor.execute("SELECT * FROM campaigns WHERE d7_date = ? AND status = '進行中'", (today_str,))
         for c in cursor.fetchall():
             msg = (
