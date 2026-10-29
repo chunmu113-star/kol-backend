@@ -10,8 +10,13 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 DB_FILE = "campaigns.db"
 
+# LINE 金鑰與多成員推播清單
 LINE_TOKEN = os.getenv("LINE_TOKEN", "NsKFLWsiaXW9sS4GW7RgpPbAqxjRZWNGBDEFxFqujB3UIbQmmxFzwBHBTa8pVLq6CVAGkwgjbygQWzC3VFw86vPXRIEFlC3//ygPVG+Tp/fu+UiUAQzlj+wsqtjvtJNSqP6eFH7ZMJN3VGjmlS43xQdB04t89/1O/w1cDnyilFU=")
-LINE_USER_ID = os.getenv("LINE_USER_ID", "U149614527cd27dc66efb13afb8bd2b63", "U305610710cb46cd6613fc45bbc15f8a4")
+
+TARGET_USERS = [
+    "U149614527cd27dc66efb13afb8bd2b63",
+    "U305610710cb46cd6613fc45bbc15f8a4"
+]
 
 def send_line_push(text):
     if "YOUR_LINE" in LINE_TOKEN:
@@ -22,15 +27,17 @@ def send_line_push(text):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_TOKEN}"
     }
-    payload = {
-        "to": LINE_USER_ID,
-        "messages": [{"type": "text", "text": text}]
-    }
-    try:
-        res = requests.post(url, json=payload, headers=headers, timeout=10)
-        print(f"[LINE 推播回應] 狀態碼: {res.status_code}")
-    except Exception as e:
-        print(f"[LINE 推播失敗]: {e}")
+    # 逐一發送給清單中的所有成員
+    for uid in TARGET_USERS:
+        payload = {
+            "to": uid,
+            "messages": [{"type": "text", "text": text}]
+        }
+        try:
+            res = requests.post(url, json=payload, headers=headers, timeout=10)
+            print(f"[LINE 推播回應] 對象: {uid[:8]}... 狀態碼: {res.status_code}")
+        except Exception as e:
+            print(f"[LINE 推播失敗] 對象: {uid[:8]}... 錯誤: {e}")
 
 def get_db():
     conn = sqlite3.connect(DB_FILE)
@@ -66,7 +73,7 @@ init_db()
 def index():
     return jsonify({"status": "running", "service": "KOL Secretary API"})
 
-# --- 接收 LINE Webhook 並取得 User ID ---
+# --- 接收 LINE Webhook 並印出 User ID ---
 @app.route("/callback", methods=["POST"])
 def callback():
     data = request.json or {}
