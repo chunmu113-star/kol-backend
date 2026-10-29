@@ -11,7 +11,7 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 DB_FILE = "campaigns.db"
 
 LINE_TOKEN = os.getenv("LINE_TOKEN", "NsKFLWsiaXW9sS4GW7RgpPbAqxjRZWNGBDEFxFqujB3UIbQmmxFzwBHBTa8pVLq6CVAGkwgjbygQWzC3VFw86vPXRIEFlC3//ygPVG+Tp/fu+UiUAQzlj+wsqtjvtJNSqP6eFH7ZMJN3VGjmlS43xQdB04t89/1O/w1cDnyilFU=")
-LINE_USER_ID = os.getenv("LINE_USER_ID", "U149614527cd27dc66efb13afb8bd2b63")
+LINE_USER_ID = os.getenv("LINE_USER_ID", "U149614527cd27dc66efb13afb8bd2b63", "U305610710cb46cd6613fc45bbc15f8a4")
 
 def send_line_push(text):
     if "YOUR_LINE" in LINE_TOKEN:
