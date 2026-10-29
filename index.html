@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>KOL 開團管家</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    body {
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen pb-12">
+
+  <!-- 頂部導航列 -->
+  <header class="sticky top-0 z-50 bg-slate-900/80 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center space-x-2">
+      <div class="p-2 bg-indigo-600/20 text-indigo-400 rounded-lg">
+        <i data-lucide="calendar-check-2" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <h1 class="text-base font-bold leading-none">KOL 開團管家</h1>
+        <span class="text-xs text-slate-400">里程碑秘書 (D-30 / D-7)</span>
+      </div>
+    </div>
+    <button onclick="triggerCronCheck()" title="立即手動觸發推播檢查" class="p-2 text-slate-400 hover:text-indigo-400 bg-slate-800 rounded-lg active:scale-95 transition">
+      <i data-lucide="bell-ring" class="w-5 h-5"></i>
+    </button>
+  </header>
+
+  <main class="max-w-lg mx-auto p-4 space-y-6">
+
+    <!-- 新增開團專案表單 -->
+    <section class="bg-slate-800/90 border border-slate-700/60 rounded-2xl p-4 shadow-xl">
+      <h2 class="text-sm font-semibold text-slate-300 flex items-center gap-1.5 mb-3">
+        <i data-lucide="plus-circle" class="w-4 h-4 text-indigo-400"></i> 新增開團專案
+      </h2>
+
+      <form id="campaignForm" onsubmit="handleCreateCampaign(event)" class="space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">合作廠商</label>
+          <div class="flex gap-2">
+            <select id="vendorSelect" required class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500">
+              <option value="" disabled selected>請選擇廠商...</option>
+            </select>
+            <button type="button" onclick="openVendorModal()" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-xs font-medium text-slate-200 active:scale-95 transition flex items-center gap-1">
+              <i data-lucide="settings-2" class="w-3.5 h-3.5"></i> 管理
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">KOL 名稱 / 專案備註</label>
+          <input type="text" id="kolName" required placeholder="例：林小美 (料理粉專)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 placeholder-slate-600">
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">預計開團日</label>
+          <input type="date" id="launchDate" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 [color-scheme:dark]">
+        </div>
+
+        <button type="submit" id="submitBtn" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] transition py-2.5 rounded-xl font-medium text-sm text-white shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2">
+          <i data-lucide="send" class="w-4 h-4"></i> 建立專案並計算里程碑
+        </button>
+      </form>
+    </section>
+
+    <!-- 開團案件清單 -->
+    <section class="space-y-3">
+      <div class="flex items-center justify-between px-1">
+        <h2 class="text-sm font-semibold text-slate-300 flex items-center gap-1.5">
+          <i data-lucide="list-todo" class="w-4 h-4 text-emerald-400"></i> 排程清單
+        </h2>
+        <span id="campaignCount" class="text-xs text-slate-500">載入中...</span>
+      </div>
+
+      <div id="campaignList" class="space-y-3">
+        <!-- 卡片動態渲染區 -->
+        <div class="text-center py-8 text-slate-500 text-xs">正在與後端連線...</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 廠商管理彈窗 (Modal) -->
+  <div id="vendorModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="bg-slate-800 border border-slate-700 w-full max-w-sm rounded-t-2xl sm:rounded-2xl p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-sm text-slate-200 flex items-center gap-2">
+          <i data-lucide="building-2" class="w-4 h-4 text-indigo-400"></i> 廠商名單庫
+        </h3>
+        <button onclick="closeVendorModal()" class="text-slate-400 hover:text-slate-200">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="flex gap-2">
+        <input type="text" id="newVendorName" placeholder="輸入廠商/品牌名稱" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500">
+        <button onclick="handleAddVendor()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-semibold active:scale-95 transition">新增</button>
+      </div>
+
+      <div class="max-h-48 overflow-y-auto space-y-2 pr-1" id="vendorList">
+        <!-- 廠商清單 -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 已自動填入你的專屬 Render 網址
+    const API_BASE_URL = "https://kol-backend-2k8s.onrender.com";
+
+    // 頁面初始化
+    document.addEventListener("DOMContentLoaded", () => {
+      lucide.createIcons();
+      fetchVendors();
+      fetchCampaigns();
+    });
+
+    // 取得廠商清單
+    async function fetchVendors() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/vendors`);
+        const vendors = await res.json();
+        
+        // 渲染下拉選單
+        const select = document.getElementById("vendorSelect");
+        select.innerHTML = '<option value="" disabled selected>請選擇廠商...</option>';
+        vendors.forEach(v => {
+          select.innerHTML += `<option value="${v}">${v}</option>`;
+        });
+
+        // 渲染彈窗名單
+        const modalList = document.getElementById("vendorList");
+        modalList.innerHTML = vendors.map(v => `
+          <div class="flex items-center justify-between bg-slate-900/60 border border-slate-700/50 px-3 py-2 rounded-xl text-xs">
+            <span>${v}</span>
+            <button onclick="handleDeleteVendor('${v}')" class="text-rose-400 hover:text-rose-300 p-1">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        `).join("");
+        lucide.createIcons();
+      } catch (err) {
+        console.error("載入廠商失敗:", err);
+      }
+    }
+
+    // 新增廠商
+    async function handleAddVendor() {
+      const input = document.getElementById("newVendorName");
+      const name = input.value.trim();
+      if (!name) return;
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/vendors`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name })
+        });
+        if (res.ok) {
+          input.value = "";
+          fetchVendors();
+        } else {
+          alert("廠商已存在或輸入無效");
+        }
+      } catch (err) {
+        alert("新增失敗，請檢查後端連線");
+      }
+    }
+
+    // 刪除廠商
+    async function handleDeleteVendor(name) {
+      if (!confirm(`確定要刪除「${name}」嗎？`)) return;
+      try {
+        await fetch(`${API_BASE_URL}/api/vendors/${encodeURIComponent(name)}`, { method: "DELETE" });
+        fetchVendors();
+      } catch (err) {
+        alert("刪除失敗");
+      }
+    }
+
+    // 取得開團專案清單
+    async function fetchCampaigns() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/campaigns`);
+        const campaigns = await res.json();
+        const container = document.getElementById("campaignList");
+        const countSpan = document.getElementById("campaignCount");
+
+        countSpan.textContent = `共 ${campaigns.length} 個專案`;
+
+        if (campaigns.length === 0) {
+          container.innerHTML = `
+            <div class="text-center py-10 bg-slate-800/40 border border-slate-700/40 rounded-2xl">
+              <p class="text-slate-500 text-xs">目前尚無開團專案，請於上方新增！</p>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = campaigns.map(c => `
+          <div class="bg-slate-800/80 border ${c.status === '已結案' ? 'border-slate-800 opacity-60' : 'border-slate-700/60'} rounded-2xl p-4 space-y-3 transition">
+            <div class="flex items-start justify-between">
+              <div>
+                <span class="inline-block px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-semibold mb-1">
+                  ${c.vendor}
+                </span>
+                <h3 class="font-bold text-sm text-slate-100">${c.kol}</h3>
+              </div>
+              <div class="flex items-center gap-1">
+                <button onclick="toggleStatus(${c.id}, '${c.status}')" class="px-2 py-1 rounded-lg text-[11px] font-medium transition ${c.status === '進行中' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-slate-700 text-slate-400'}">
+                  ${c.status}
+                </button>
+                <button onclick="handleDeleteCampaign(${c.id})" class="p-1.5 text-slate-500 hover:text-rose-400 transition">
+                  <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- 里程碑時程資訊 -->
+            <div class="grid grid-cols-3 gap-2 bg-slate-900/60 rounded-xl p-2.5 text-center border border-slate-800/80 text-[11px]">
+              <div>
+                <div class="text-slate-500 mb-0.5">D-30 準備</div>
+                <div class="font-semibold text-slate-300">${c.d30_date}</div>
+              </div>
+              <div class="border-x border-slate-800">
+                <div class="text-slate-500 mb-0.5">D-7 確認</div>
+                <div class="font-semibold text-amber-400">${c.d7_date}</div>
+              </div>
+              <div>
+                <div class="text-slate-500 mb-0.5">預計開團</div>
+                <div class="font-bold text-indigo-400">${c.launch_date}</div>
+              </div>
+            </div>
+          </div>
+        `).join("");
+
+        lucide.createIcons();
+      } catch (err) {
+        console.error("載入排程失敗:", err);
+      }
+    }
+
+    // 建立新專案
+    async function handleCreateCampaign(e) {
+      e.preventDefault();
+      const submitBtn = document.getElementById("submitBtn");
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = "處理中...";
+
+      const payload = {
+        vendor: document.getElementById("vendorSelect").value,
+        kol: document.getElementById("kolName").value.trim(),
+        launch_date: document.getElementById("launchDate").value
+      };
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/campaigns`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          document.getElementById("kolName").value = "";
+          document.getElementById("launchDate").value = "";
+          fetchCampaigns();
+        } else {
+          alert("建立失敗，請稍後再試");
+        }
+      } catch (err) {
+        alert("連線異常，請確認後端是否休眠喚醒中");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<i data-lucide="send" class="w-4 h-4"></i> 建立專案並計算里程碑`;
+        lucide.createIcons();
+      }
+    }
+
+    // 切換結案狀態
+    async function toggleStatus(id, currentStatus) {
+      const nextStatus = currentStatus === "進行中" ? "已結案" : "進行中";
+      try {
+        await fetch(`${API_BASE_URL}/api/campaigns/${id}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: nextStatus })
+        });
+        fetchCampaigns();
+      } catch (err) {
+        alert("狀態更新失敗");
+      }
+    }
+
+    // 刪除案件
+    async function handleDeleteCampaign(id) {
+      if (!confirm("確定要刪除這筆開團專案嗎？")) return;
+      try {
+        await fetch(`${API_BASE_URL}/api/campaigns/${id}`, { method: "DELETE" });
+        fetchCampaigns();
+      } catch (err) {
+        alert("刪除失敗");
+      }
+    }
+
+    // 手動觸發排程檢查 (測試 LINE 推播)
+    async function triggerCronCheck() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/cron-check`);
+        const data = await res.json();
+        alert(`檢查完畢 (檢核日期: ${data.checked_date})！若今日有符合 D-30 或 D-7 的專案，已發送 LINE 推播。`);
+      } catch (err) {
+        alert("觸發檢查失敗，請檢查後端日誌");
+      }
+    }
+
+    // 彈窗開關
+    function openVendorModal() {
+      document.getElementById("vendorModal").classList.remove("hidden");
+    }
+    function closeVendorModal() {
+      document.getElementById("vendorModal").classList.add("hidden");
+    }
+  </script>
+</body>
+</html>
