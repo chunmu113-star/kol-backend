@@ -15,7 +15,7 @@
     }
   </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen pb-12">
+<body class="bg-slate-900 text-slate-100 min-h-screen pb-16">
 
   <!-- 頂部導航列 -->
   <header class="sticky top-0 z-50 bg-slate-900/80 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between">
@@ -28,9 +28,17 @@
         <span class="text-xs text-slate-400">里程碑秘書 (D-30 / D-7)</span>
       </div>
     </div>
-    <button onclick="triggerCronCheck()" title="立即手動觸發推播檢查" class="p-2 text-slate-400 hover:text-indigo-400 bg-slate-800 rounded-lg active:scale-95 transition">
-      <i data-lucide="bell-ring" class="w-5 h-5"></i>
-    </button>
+    
+    <!-- 右側功能鍵：匯出 CSV + 手動觸發推播 -->
+    <div class="flex items-center gap-2">
+      <button onclick="exportToCSV()" title="匯出所有專案為 CSV" class="p-2 text-slate-400 hover:text-emerald-400 bg-slate-800 rounded-lg active:scale-95 transition flex items-center gap-1 text-xs">
+        <i data-lucide="download" class="w-4 h-4"></i>
+        <span class="hidden sm:inline font-medium">匯出 CSV</span>
+      </button>
+      <button onclick="triggerCronCheck()" title="立即手動觸發推播檢查" class="p-2 text-slate-400 hover:text-indigo-400 bg-slate-800 rounded-lg active:scale-95 transition">
+        <i data-lucide="bell-ring" class="w-4 h-4"></i>
+      </button>
+    </div>
   </header>
 
   <main class="max-w-lg mx-auto p-4 space-y-6">
@@ -70,18 +78,27 @@
       </form>
     </section>
 
-    <!-- 開團案件清單 -->
+    <!-- 開團案件分類與清單區 -->
     <section class="space-y-3">
+      <!-- 分類標籤頁切換 -->
       <div class="flex items-center justify-between px-1">
-        <h2 class="text-sm font-semibold text-slate-300 flex items-center gap-1.5">
-          <i data-lucide="list-todo" class="w-4 h-4 text-emerald-400"></i> 排程清單
-        </h2>
-        <span id="campaignCount" class="text-xs text-slate-500">載入中...</span>
+        <div class="flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700/60">
+          <button id="tabActive" onclick="switchTab('進行中')" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 bg-indigo-600 text-white shadow-sm">
+            <i data-lucide="loader" class="w-3.5 h-3.5"></i> 進行中 <span id="activeCountBadge" class="ml-1 text-[10px] px-1.5 py-0.2 bg-indigo-800/80 rounded-full">0</span>
+          </button>
+          <button id="tabCompleted" onclick="switchTab('已結案')" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 text-slate-400 hover:text-slate-200">
+            <i data-lucide="check-circle" class="w-3.5 h-3.5"></i> 已結案 <span id="completedCountBadge" class="ml-1 text-[10px] px-1.5 py-0.2 bg-slate-700 rounded-full">0</span>
+          </button>
+        </div>
+
+        <button onclick="exportToCSV()" class="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 py-1 px-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 active:scale-95 transition">
+          <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i> 下載 CSV
+        </button>
       </div>
 
+      <!-- 卡片動態渲染容器 -->
       <div id="campaignList" class="space-y-3">
-        <!-- 卡片動態渲染區 -->
-        <div class="text-center py-8 text-slate-500 text-xs">正在與後端連線...</div>
+        <div class="text-center py-8 text-slate-500 text-xs">正在連線讀取案件中...</div>
       </div>
     </section>
 
@@ -105,36 +122,93 @@
       </div>
 
       <div class="max-h-48 overflow-y-auto space-y-2 pr-1" id="vendorList">
-        <!-- 廠商清單 -->
+        <!-- 廠商清單動態生成 -->
       </div>
     </div>
   </div>
 
   <script>
-    // 已自動填入你的專屬 Render 網址
     const API_BASE_URL = "https://kol-backend-2k8s.onrender.com";
 
-    // 頁面初始化
+    let currentTab = "進行中";
+    let allCampaigns = [];
+
     document.addEventListener("DOMContentLoaded", () => {
       lucide.createIcons();
       fetchVendors();
       fetchCampaigns();
     });
 
-    // 取得廠商清單
+    // 匯出 CSV 函式 (包含 UTF-8 BOM 防止 Excel 亂碼)
+    function exportToCSV() {
+      if (!allCampaigns || allCampaigns.length === 0) {
+        alert("目前尚無開團專案可供匯出！");
+        return;
+      }
+
+      // 定義 CSV 欄位標題
+      const headers = ["專案ID", "合作廠商", "KOL名稱/備註", "預計開團日", "D-30準備日", "D-7確認日", "專案狀態"];
+      
+      // 將物件轉換為 CSV 行
+      const rows = allCampaigns.map(c => [
+        c.id,
+        `"${(c.vendor || '').replace(/"/g, '""')}"`,
+        `"${(c.kol || '').replace(/"/g, '""')}"`,
+        c.launch_date,
+        c.d30_date,
+        c.d7_date,
+        c.status
+      ]);
+
+      // 組合 CSV 內容
+      const csvContent = [
+        headers.join(","),
+        ...rows.map(r => r.join(","))
+      ].join("\r\n");
+
+      // 加入 UTF-8 BOM (\uFEFF)
+      const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      
+      const today = new Date().toISOString().split("T")[0];
+      link.setAttribute("href", url);
+      link.setAttribute("download", `KOL開團排程備份_${today}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    function switchTab(status) {
+      currentTab = status;
+      const tabActive = document.getElementById("tabActive");
+      const tabCompleted = document.getElementById("tabCompleted");
+
+      if (status === "進行中") {
+        tabActive.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 bg-indigo-600 text-white shadow-sm";
+        tabCompleted.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 text-slate-400 hover:text-slate-200";
+      } else {
+        tabCompleted.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 bg-indigo-600 text-white shadow-sm";
+        tabActive.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 text-slate-400 hover:text-slate-200";
+      }
+
+      renderCampaignsByTab();
+    }
+
     async function fetchVendors() {
       try {
         const res = await fetch(`${API_BASE_URL}/api/vendors`);
         const vendors = await res.json();
         
-        // 渲染下拉選單
         const select = document.getElementById("vendorSelect");
+        const currentValue = select.value;
         select.innerHTML = '<option value="" disabled selected>請選擇廠商...</option>';
         vendors.forEach(v => {
           select.innerHTML += `<option value="${v}">${v}</option>`;
         });
+        if (currentValue) select.value = currentValue;
 
-        // 渲染彈窗名單
         const modalList = document.getElementById("vendorList");
         modalList.innerHTML = vendors.map(v => `
           <div class="flex items-center justify-between bg-slate-900/60 border border-slate-700/50 px-3 py-2 rounded-xl text-xs">
@@ -150,7 +224,6 @@
       }
     }
 
-    // 新增廠商
     async function handleAddVendor() {
       const input = document.getElementById("newVendorName");
       const name = input.value.trim();
@@ -169,11 +242,10 @@
           alert("廠商已存在或輸入無效");
         }
       } catch (err) {
-        alert("新增失敗，請檢查後端連線");
+        alert("新增失敗，請檢查網路連線");
       }
     }
 
-    // 刪除廠商
     async function handleDeleteVendor(name) {
       if (!confirm(`確定要刪除「${name}」嗎？`)) return;
       try {
@@ -184,69 +256,77 @@
       }
     }
 
-    // 取得開團專案清單
     async function fetchCampaigns() {
       try {
         const res = await fetch(`${API_BASE_URL}/api/campaigns`);
-        const campaigns = await res.json();
-        const container = document.getElementById("campaignList");
-        const countSpan = document.getElementById("campaignCount");
-
-        countSpan.textContent = `共 ${campaigns.length} 個專案`;
-
-        if (campaigns.length === 0) {
-          container.innerHTML = `
-            <div class="text-center py-10 bg-slate-800/40 border border-slate-700/40 rounded-2xl">
-              <p class="text-slate-500 text-xs">目前尚無開團專案，請於上方新增！</p>
-            </div>
-          `;
-          return;
-        }
-
-        container.innerHTML = campaigns.map(c => `
-          <div class="bg-slate-800/80 border ${c.status === '已結案' ? 'border-slate-800 opacity-60' : 'border-slate-700/60'} rounded-2xl p-4 space-y-3 transition">
-            <div class="flex items-start justify-between">
-              <div>
-                <span class="inline-block px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-semibold mb-1">
-                  ${c.vendor}
-                </span>
-                <h3 class="font-bold text-sm text-slate-100">${c.kol}</h3>
-              </div>
-              <div class="flex items-center gap-1">
-                <button onclick="toggleStatus(${c.id}, '${c.status}')" class="px-2 py-1 rounded-lg text-[11px] font-medium transition ${c.status === '進行中' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-slate-700 text-slate-400'}">
-                  ${c.status}
-                </button>
-                <button onclick="handleDeleteCampaign(${c.id})" class="p-1.5 text-slate-500 hover:text-rose-400 transition">
-                  <i data-lucide="trash-2" class="w-4 h-4"></i>
-                </button>
-              </div>
-            </div>
-
-            <!-- 里程碑時程資訊 -->
-            <div class="grid grid-cols-3 gap-2 bg-slate-900/60 rounded-xl p-2.5 text-center border border-slate-800/80 text-[11px]">
-              <div>
-                <div class="text-slate-500 mb-0.5">D-30 準備</div>
-                <div class="font-semibold text-slate-300">${c.d30_date}</div>
-              </div>
-              <div class="border-x border-slate-800">
-                <div class="text-slate-500 mb-0.5">D-7 確認</div>
-                <div class="font-semibold text-amber-400">${c.d7_date}</div>
-              </div>
-              <div>
-                <div class="text-slate-500 mb-0.5">預計開團</div>
-                <div class="font-bold text-indigo-400">${c.launch_date}</div>
-              </div>
-            </div>
-          </div>
-        `).join("");
-
-        lucide.createIcons();
+        allCampaigns = await res.json();
+        renderCampaignsByTab();
       } catch (err) {
-        console.error("載入排程失敗:", err);
+        console.error("載入專案排程失敗:", err);
       }
     }
 
-    // 建立新專案
+    function renderCampaignsByTab() {
+      const container = document.getElementById("campaignList");
+      const activeCountSpan = document.getElementById("activeCountBadge");
+      const completedCountSpan = document.getElementById("completedCountBadge");
+
+      const activeList = allCampaigns.filter(c => c.status === "進行中");
+      const completedList = allCampaigns.filter(c => c.status === "已結案");
+
+      activeCountSpan.textContent = activeList.length;
+      completedCountSpan.textContent = completedList.length;
+
+      const displayList = currentTab === "進行中" ? activeList : completedList;
+
+      if (displayList.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-10 bg-slate-800/40 border border-slate-700/40 rounded-2xl">
+            <p class="text-slate-500 text-xs">目前無「${currentTab}」之專案</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = displayList.map(c => `
+        <div class="bg-slate-800/80 border ${c.status === '已結案' ? 'border-slate-800/60 opacity-75' : 'border-slate-700/60'} rounded-2xl p-4 space-y-3 transition shadow-sm">
+          <div class="flex items-start justify-between">
+            <div>
+              <span class="inline-block px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-semibold mb-1">
+                ${c.vendor}
+              </span>
+              <h3 class="font-bold text-sm text-slate-100">${c.kol}</h3>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button onclick="toggleStatus(${c.id}, '${c.status}')" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${c.status === '進行中' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' : 'bg-slate-700/70 text-slate-300 border border-slate-600'}">
+                ${c.status === '進行中' ? '結案' : '重啟'}
+              </button>
+              <button onclick="handleDeleteCampaign(${c.id})" class="p-1.5 text-slate-500 hover:text-rose-400 transition">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-2 bg-slate-900/60 rounded-xl p-2.5 text-center border border-slate-800/80 text-[11px]">
+            <div>
+              <div class="text-slate-500 mb-0.5">D-30 準備</div>
+              <div class="font-semibold text-slate-300">${c.d30_date}</div>
+            </div>
+            <div class="border-x border-slate-800">
+              <div class="text-slate-500 mb-0.5">D-7 確認</div>
+              <div class="font-semibold text-amber-400">${c.d7_date}</div>
+            </div>
+            <div>
+              <div class="text-slate-500 mb-0.5">預計開團</div>
+              <div class="font-bold text-indigo-400">${c.launch_date}</div>
+            </div>
+          </div>
+        </div>
+      `).join("");
+
+      lucide.createIcons();
+    }
+
     async function handleCreateCampaign(e) {
       e.preventDefault();
       const submitBtn = document.getElementById("submitBtn");
@@ -269,7 +349,7 @@
         if (res.ok) {
           document.getElementById("kolName").value = "";
           document.getElementById("launchDate").value = "";
-          fetchCampaigns();
+          await fetchCampaigns();
         } else {
           alert("建立失敗，請稍後再試");
         }
@@ -282,33 +362,34 @@
       }
     }
 
-    // 切換結案狀態
     async function toggleStatus(id, currentStatus) {
       const nextStatus = currentStatus === "進行中" ? "已結案" : "進行中";
       try {
-        await fetch(`${API_BASE_URL}/api/campaigns/${id}/status`, {
+        const res = await fetch(`${API_BASE_URL}/api/campaigns/${id}/status`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: nextStatus })
         });
-        fetchCampaigns();
+        if (res.ok) {
+          await fetchCampaigns();
+        }
       } catch (err) {
         alert("狀態更新失敗");
       }
     }
 
-    // 刪除案件
     async function handleDeleteCampaign(id) {
       if (!confirm("確定要刪除這筆開團專案嗎？")) return;
       try {
-        await fetch(`${API_BASE_URL}/api/campaigns/${id}`, { method: "DELETE" });
-        fetchCampaigns();
+        const res = await fetch(`${API_BASE_URL}/api/campaigns/${id}`, { method: "DELETE" });
+        if (res.ok) {
+          await fetchCampaigns();
+        }
       } catch (err) {
         alert("刪除失敗");
       }
     }
 
-    // 手動觸發排程檢查 (測試 LINE 推播)
     async function triggerCronCheck() {
       try {
         const res = await fetch(`${API_BASE_URL}/api/cron-check`);
@@ -319,7 +400,6 @@
       }
     }
 
-    // 彈窗開關
     function openVendorModal() {
       document.getElementById("vendorModal").classList.remove("hidden");
     }
