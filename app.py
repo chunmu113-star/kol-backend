@@ -1,4 +1,6 @@
 import os
+import json
+import base64
 import sqlite3
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
@@ -10,34 +12,99 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 DB_FILE = "campaigns.db"
 
-# LINE 金鑰與多成員推播清單
+# --- LINE 推播設定 ---
 LINE_TOKEN = os.getenv("LINE_TOKEN", "NsKFLWsiaXW9sS4GW7RgpPbAqxjRZWNGBDEFxFqujB3UIbQmmxFzwBHBTa8pVLq6CVAGkwgjbygQWzC3VFw86vPXRIEFlC3//ygPVG+Tp/fu+UiUAQzlj+wsqtjvtJNSqP6eFH7ZMJN3VGjmlS43xQdB04t89/1O/w1cDnyilFU=")
-
 TARGET_USERS = [
     "U149614527cd27dc66efb13afb8bd2b63",
     "U305610710cb46cd6613fc45bbc15f8a4"
 ]
 
+# --- GitHub 自動備份設定 ---
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+GITHUB_REPO = os.getenv("GITHUB_REPO", "") # 格式: "你的帳號/kol-backend"
+BACKUP_FILENAME = "backup_data.json"
+
+def sync_to_github():
+    """每次資料異動時，將資料庫導出為 JSON 並自動 commit 到 GitHub"""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return
+    try:
+        with get_db() as conn:
+            vendors = [r["name"] for r in conn.execute("SELECT name FROM vendors").fetchall()]
+            campaigns = [dict(r) for r in conn.execute("SELECT * FROM campaigns").fetchall()]
+        
+        backup_content = json.dumps({"vendors": vendors, "campaigns": campaigns}, ensure_ascii=False, indent=2)
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{BACKUP_FILENAME}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        # 檢查檔案是否已存在以取得 sha
+        sha = None
+        get_res = requests.get(url, headers=headers)
+        if get_res.status_code == 200:
+            sha = get_res.json().get("sha")
+            
+        payload = {
+            "message": f"🤖 [自動備份] 更新開團資料庫 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "content": base64.b64encode(backup_content.encode("utf-8")).decode("utf-8")
+        }
+        if sha:
+            payload["sha"] = sha
+            
+        put_res = requests.put(url, headers=headers, json=payload)
+        if put_res.status_code in [200, 201]:
+            print("✅ 成功備份至 GitHub！")
+        else:
+            print("❌ GitHub 備份失敗:", put_res.text)
+    except Exception as e:
+        print("❌ 備份過程發生錯誤:", e)
+
+def restore_from_github():
+    """容器啟動時，自動從 GitHub 讀取備份資料還原至 SQLite"""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return
+    try:
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{BACKUP_FILENAME}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            content = base64.b64decode(res.json()["content"]).decode("utf-8")
+            data = json.loads(content)
+            with get_db() as conn:
+                for v in data.get("vendors", []):
+                    conn.execute("INSERT OR IGNORE INTO vendors (name) VALUES (?)", (v,))
+                for c in data.get("campaigns", []):
+                    conn.execute("""
+                        INSERT OR IGNORE INTO campaigns (id, vendor, kol, launch_date, d30_date, d7_date, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (c.get("id"), c["vendor"], c["kol"], c["launch_date"], c["d30_date"], c["d7_date"], c["status"]))
+                conn.commit()
+            print("🚀 已成功從 GitHub 備份檔還原資料！")
+    except Exception as e:
+        print("❌ 還原 GitHub 資料失敗:", e)
+
 def send_line_push(text):
     if "YOUR_LINE" in LINE_TOKEN:
-        print("[推播略過] 未設定 Channel Access Token:", text)
         return
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_TOKEN}"
     }
-    # 逐一發送給清單中的所有成員
     for uid in TARGET_USERS:
         payload = {
             "to": uid,
             "messages": [{"type": "text", "text": text}]
         }
         try:
-            res = requests.post(url, json=payload, headers=headers, timeout=10)
-            print(f"[LINE 推播回應] 對象: {uid[:8]}... 狀態碼: {res.status_code}")
-        except Exception as e:
-            print(f"[LINE 推播失敗] 對象: {uid[:8]}... 錯誤: {e}")
+            requests.post(url, json=payload, headers=headers, timeout=10)
+        except Exception:
+            pass
 
 def get_db():
     conn = sqlite3.connect(DB_FILE)
@@ -66,6 +133,8 @@ def init_db():
         conn.execute("INSERT OR IGNORE INTO vendors (name) VALUES ('品牌A')")
         conn.execute("INSERT OR IGNORE INTO vendors (name) VALUES ('優質生活家')")
         conn.commit()
+    # 啟動時自動還原資料
+    restore_from_github()
 
 init_db()
 
@@ -73,7 +142,7 @@ init_db()
 def index():
     return jsonify({"status": "running", "service": "KOL Secretary API"})
 
-# --- 接收 LINE Webhook 並印出 User ID ---
+# --- 接收 LINE Webhook ---
 @app.route("/callback", methods=["POST"])
 def callback():
     data = request.json or {}
@@ -81,11 +150,7 @@ def callback():
     for event in events:
         source = event.get("source", {})
         user_id = source.get("userId")
-        event_type = event.get("type")
-        print("=" * 45)
-        print(f"🔥 收到 LINE 事件: {event_type}")
-        print(f"🔥 抓到該好友的真實 USER ID: {user_id}")
-        print("=" * 45)
+        print(f"🔥 收到 LINE 事件，User ID: {user_id}")
     return jsonify({"status": "ok"})
 
 # --- 廠商名單庫 API ---
@@ -104,6 +169,7 @@ def add_vendor():
         try:
             conn.execute("INSERT INTO vendors (name) VALUES (?)", (name,))
             conn.commit()
+            sync_to_github()
             return jsonify({"success": True})
         except sqlite3.IntegrityError:
             return jsonify({"error": "該廠商已存在"}), 400
@@ -113,6 +179,7 @@ def delete_vendor(name):
     with get_db() as conn:
         conn.execute("DELETE FROM vendors WHERE name = ?", (name,))
         conn.commit()
+        sync_to_github()
     return jsonify({"success": True})
 
 # --- 案件管理 API ---
@@ -134,6 +201,7 @@ def add_campaign():
             VALUES (?, ?, ?, ?, ?)
         """, (data["vendor"], data["kol"], data["launch_date"], d30, d7))
         conn.commit()
+        sync_to_github()
     return jsonify({"success": True})
 
 @app.route("/api/campaigns/<int:cid>/status", methods=["PATCH"])
@@ -142,6 +210,7 @@ def update_campaign_status(cid):
     with get_db() as conn:
         conn.execute("UPDATE campaigns SET status = ? WHERE id = ?", (data["status"], cid))
         conn.commit()
+        sync_to_github()
     return jsonify({"success": True})
 
 @app.route("/api/campaigns/<int:cid>", methods=["DELETE"])
@@ -149,6 +218,7 @@ def delete_campaign(cid):
     with get_db() as conn:
         conn.execute("DELETE FROM campaigns WHERE id = ?", (cid,))
         conn.commit()
+        sync_to_github()
     return jsonify({"success": True})
 
 # --- 排程檢核 API ---
@@ -157,34 +227,54 @@ def cron_check():
     today_str = datetime.now().strftime("%Y-%m-%d")
     with get_db() as conn:
         cursor = conn.cursor()
-        
-        cursor.execute("SELECT * FROM campaigns WHERE d30_date = ? AND status = '進行中'", (today_str,))
-        for c in cursor.fetchall():
-            msg = (
-                f"🔔【開團倒數 30 天｜廠商確認提醒】\n\n"
-                f"• 合作：{c['vendor']} × {c['kol']}\n"
-                f"• 開團日：{c['launch_date']}\n\n"
-                f"📝 待辦確認：\n"
-                f"1. 現貨庫存與活動分潤確認\n"
-                f"2. 廠商專屬導購連結生成\n"
-                f"3. 樣品寄送追蹤"
-            )
-            send_line_push(msg)
-
         cursor.execute("SELECT * FROM campaigns WHERE d7_date = ? AND status = '進行中'", (today_str,))
-        for c in cursor.fetchall():
-            msg = (
-                f"⚠️【開團倒數 7 天｜KOL 上線確認】\n\n"
-                f"• 合作：{c['vendor']} × {c['kol']}\n"
-                f"• 開團日：{c['launch_date']}\n\n"
-                f"📝 待辦確認：\n"
-                f"1. 樣品體驗照片確認\n"
-                f"2. 開箱圖文/限動文案審查\n"
-                f"3. 實測專屬連結轉單是否正常"
-            )
-            send_line_push(msg)
+        d7_items = cursor.fetchall()
 
-    return jsonify({"status": "ok", "checked_date": today_str})
+        cursor.execute("SELECT * FROM campaigns WHERE d30_date = ? AND status = '進行中'", (today_str,))
+        d30_items = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT * FROM campaigns 
+            WHERE launch_date >= ? AND status = '進行中' 
+            ORDER BY launch_date ASC
+            LIMIT 8
+        """, (today_str,))
+        upcoming_items = cursor.fetchall()
+
+    has_today_task = bool(d7_items or d30_items)
+    lines = [f"📅【KOL 開團管家日報｜{today_str}】\n"]
+
+    if not has_today_task:
+        lines.append("🎉 今日無到期的 D-7 / D-30 待辦事項！\n")
+    else:
+        if d7_items:
+            lines.append("⚠️【開團倒數 7 天｜KOL 上線確認】")
+            for c in d7_items:
+                lines.append(f"• {c['vendor']} × {c['kol']} (開團: {c['launch_date']})")
+            lines.append("  ↳ 待辦：樣品體驗圖、開箱文案審核、連結轉單測試\n")
+
+        if d30_items:
+            lines.append("🔔【開團倒數 30 天｜廠商確認提醒】")
+            for c in d30_items:
+                lines.append(f"• {c['vendor']} × {c['kol']} (開團: {c['launch_date']})")
+            lines.append("  ↳ 待辦：庫存與分潤確認、導購連結生成、樣品寄送\n")
+
+    if upcoming_items:
+        lines.append("📌【近期排程預告 (依日期排序)】")
+        for c in upcoming_items:
+            lines.append(f"• {c['launch_date']}｜{c['vendor']} × {c['kol']}")
+    else:
+        lines.append("📌【近期排程預告】：目前無排程中案件")
+
+    full_message = "\n".join(lines)
+    send_line_push(full_message)
+
+    return jsonify({
+        "status": "ok", 
+        "checked_date": today_str,
+        "d7_count": len(d7_items),
+        "d30_count": len(d30_items)
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
