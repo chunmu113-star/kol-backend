@@ -1,0 +1,29 @@
+{
+  "vendors": [
+    "品牌A",
+    "優質生活家"
+  ],
+  "campaigns": [
+    {
+      "id": 1,
+      "vendor": "優質生活家",
+      "kol": "ABC",
+      "launch_date": "2026-11-09",
+      "d30_date": "2026-10-10",
+      "d7_date": "2026-11-02",
+      "status": "進行中"
+    }
+  ],
+  "members": [
+    {
+      "user_id": "U149614527cd27dc66efb13afb8bd2b63",
+      "name": "成員 1",
+      "is_active": 1
+    },
+    {
+      "user_id": "U305610710cb46cd6613fc45bbc15f8a4",
+      "name": "成員 2",
+      "is_active": 1
+    }
+  ]
+}
