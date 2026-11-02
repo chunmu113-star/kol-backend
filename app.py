@@ -14,10 +14,6 @@ DB_FILE = "campaigns.db"
 
 # --- LINE 推播設定 ---
 LINE_TOKEN = os.getenv("LINE_TOKEN", "NsKFLWsiaXW9sS4GW7RgpPbAqxjRZWNGBDEFxFqujB3UIbQmmxFzwBHBTa8pVLq6CVAGkwgjbygQWzC3VFw86vPXRIEFlC3//ygPVG+Tp/fu+UiUAQzlj+wsqtjvtJNSqP6eFH7ZMJN3VGjmlS43xQdB04t89/1O/w1cDnyilFU=")
-TARGET_USERS = [
-    "U149614527cd27dc66efb13afb8bd2b63",
-    "U305610710cb46cd6613fc45bbc15f8a4"
-]
 
 # --- GitHub 自動備份設定 ---
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
@@ -32,15 +28,20 @@ def sync_to_github():
         with get_db() as conn:
             vendors = [r["name"] for r in conn.execute("SELECT name FROM vendors").fetchall()]
             campaigns = [dict(r) for r in conn.execute("SELECT * FROM campaigns").fetchall()]
+            members = [dict(r) for r in conn.execute("SELECT * FROM members").fetchall()]
         
-        backup_content = json.dumps({"vendors": vendors, "campaigns": campaigns}, ensure_ascii=False, indent=2)
+        backup_content = json.dumps({
+            "vendors": vendors, 
+            "campaigns": campaigns,
+            "members": members
+        }, ensure_ascii=False, indent=2)
+        
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{BACKUP_FILENAME}"
         headers = {
             "Authorization": f"token {GITHUB_TOKEN}",
             "Accept": "application/vnd.github.v3+json"
         }
         
-        # 檢查檔案是否已存在以取得 sha
         sha = None
         get_res = requests.get(url, headers=headers)
         if get_res.status_code == 200:
@@ -67,10 +68,7 @@ def restore_from_github():
         return
     try:
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{BACKUP_FILENAME}"
-        headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
-        }
+        headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
         res = requests.get(url, headers=headers)
         if res.status_code == 200:
             content = base64.b64decode(res.json()["content"]).decode("utf-8")
@@ -83,6 +81,11 @@ def restore_from_github():
                         INSERT OR IGNORE INTO campaigns (id, vendor, kol, launch_date, d30_date, d7_date, status)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (c.get("id"), c["vendor"], c["kol"], c["launch_date"], c["d30_date"], c["d7_date"], c["status"]))
+                for m in data.get("members", []):
+                    conn.execute("""
+                        INSERT OR REPLACE INTO members (user_id, name, is_active)
+                        VALUES (?, ?, ?)
+                    """, (m["user_id"], m["name"], m["is_active"]))
                 conn.commit()
             print("🚀 已成功從 GitHub 備份檔還原資料！")
     except Exception as e:
@@ -96,15 +99,22 @@ def send_line_push(text):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_TOKEN}"
     }
-    for uid in TARGET_USERS:
+    
+    # 僅查詢勾選開啟 (is_active = 1) 的對象
+    with get_db() as conn:
+        active_members = conn.execute("SELECT user_id, name FROM members WHERE is_active = 1").fetchall()
+        
+    for m in active_members:
+        uid = m["user_id"]
         payload = {
             "to": uid,
             "messages": [{"type": "text", "text": text}]
         }
         try:
-            requests.post(url, json=payload, headers=headers, timeout=10)
-        except Exception:
-            pass
+            res = requests.post(url, json=payload, headers=headers, timeout=10)
+            print(f"[LINE 推播] 對象: {m['name']} ({uid[:8]}...) 狀態碼: {res.status_code}")
+        except Exception as e:
+            print(f"[LINE 推播失敗] 對象: {m['name']} 錯誤: {e}")
 
 def get_db():
     conn = sqlite3.connect(DB_FILE)
@@ -130,10 +140,20 @@ def init_db():
                 name TEXT UNIQUE NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS members (
+                user_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                is_active INTEGER DEFAULT 1
+            )
+        """)
+        # 預設兩位成員
+        conn.execute("INSERT OR IGNORE INTO members (user_id, name, is_active) VALUES ('U149614527cd27dc66efb13afb8bd2b63', '成員 1', 1)")
+        conn.execute("INSERT OR IGNORE INTO members (user_id, name, is_active) VALUES ('U305610710cb46cd6613fc45bbc15f8a4', '成員 2', 1)")
+        
         conn.execute("INSERT OR IGNORE INTO vendors (name) VALUES ('品牌A')")
         conn.execute("INSERT OR IGNORE INTO vendors (name) VALUES ('優質生活家')")
         conn.commit()
-    # 啟動時自動還原資料
     restore_from_github()
 
 init_db()
@@ -142,16 +162,22 @@ init_db()
 def index():
     return jsonify({"status": "running", "service": "KOL Secretary API"})
 
-# --- 接收 LINE Webhook ---
-@app.route("/callback", methods=["POST"])
-def callback():
+# --- 推播成員管理 API ---
+@app.route("/api/members", methods=["GET"])
+def get_members():
+    with get_db() as conn:
+        rows = conn.execute("SELECT user_id, name, is_active FROM members ORDER BY rowid ASC").fetchall()
+        return jsonify([dict(r) for r in rows])
+
+@app.route("/api/members/<string:uid>/toggle", methods=["PATCH"])
+def toggle_member(uid):
     data = request.json or {}
-    events = data.get("events", [])
-    for event in events:
-        source = event.get("source", {})
-        user_id = source.get("userId")
-        print(f"🔥 收到 LINE 事件，User ID: {user_id}")
-    return jsonify({"status": "ok"})
+    is_active = 1 if data.get("is_active") else 0
+    with get_db() as conn:
+        conn.execute("UPDATE members SET is_active = ? WHERE user_id = ?", (is_active, uid))
+        conn.commit()
+        sync_to_github()
+    return jsonify({"success": True})
 
 # --- 廠商名單庫 API ---
 @app.route("/api/vendors", methods=["GET"])
